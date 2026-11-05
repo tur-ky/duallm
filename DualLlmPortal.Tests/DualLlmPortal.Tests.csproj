@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xunit.v3 test projects are self-hosting executables: run them with `dotnet run`. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- The logic under test (config, launch planning, worker commands) is plain C#. It is compiled
+       straight into the test assembly rather than referenced, so the tests do not need the WPF
+       project, its Windows-only target framework or its WebView2 dependency. -->
+  <ItemGroup>
+    <Compile Include="..\DualLlmPortal\PortalConfig.cs" Link="Linked\PortalConfig.cs" />
+    <Compile Include="..\DualLlmPortal\LaunchPlan.cs" Link="Linked\LaunchPlan.cs" />
+    <Compile Include="..\DualLlmPortal\RemoteWorkers.cs" Link="Linked\RemoteWorkers.cs" />
+    <Compile Include="..\DualLlmPortal\Shell.cs" Link="Linked\Shell.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="*" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

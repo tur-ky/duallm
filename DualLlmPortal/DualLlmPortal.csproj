@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+
+    <!-- The app ships as a single self-contained exe plus a few native sidecar DLLs. These belong here
+         rather than only on the command line: a bare `dotnet publish` without them produces a
+         different, framework-dependent layout. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+
+    <!-- Build it with scripts\publish.ps1 rather than a hand-typed `dotnet publish`. Publishing
+         straight into the folder that contains this project can delete the WPF markup-compile output
+         (MainWindow.baml, DualLlmPortal.g.resources) and link an exe with no XAML in it, which then
+         dies on startup with "Cannot locate resource 'mainwindow.xaml'" - and still builds, links and
+         reports success. The script publishes to a staging folder and copies the result next to the
+         config, and launches the exe once to prove it starts. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
+
+  <!-- The setup page is bundled into the assembly and loaded with NavigateToString at runtime.
+       Embedding (rather than copying next to the exe) keeps publishing simple: nothing extra has to
+       travel alongside DualLlmPortal.exe. -->
+  <ItemGroup>
+    <EmbeddedResource Include="SetupUi\setup.html" />
+  </ItemGroup>
+</Project>

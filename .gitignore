@@ -1,0 +1,46 @@
+# ---- Your configuration (copy duallm.example.json -> duallm.config.json) ----
+/duallm.config.json
+
+# ---- Models: multi-gigabyte weights never belong in git ----
+/llm_models/
+*.gguf
+*.ggml
+*.safetensors
+*.bin
+*.imatrix
+
+# ---- llama.cpp checkout and build (scripts/build-llamacpp.ps1 creates it) ----
+/llama.cpp/
+
+# ---- Build and publish output ----
+bin/
+obj/
+/.build/
+/DualLlmPortal.exe
+/DualLlmPortal.pdb
+*.old
+/*.dll
+/Microsoft.Web.WebView2.*.xml
+/runtimes/
+*.WebView2/
+
+# ---- Runtime output ----
+*.log
+
+# ---- Editor / tool state and scratch space ----
+.vs/
+.vscode/
+.idea/
+*.user
+.claude/
+.scratch/
+.simple-workflow/
+
+# ---- Secrets, just in case ----
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+id_rsa*
+id_ed25519*

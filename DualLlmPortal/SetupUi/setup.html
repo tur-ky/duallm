@@ -1,0 +1,578 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #121212; color: #EDEDED;
+    overflow: hidden;
+  }
+  a { color: #D97757; }
+  button, input { font-family: inherit; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { opacity: 1; height: 20px; }
+
+  #app { position: absolute; inset: 0; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+
+  .scrollpane { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #2E2E2E #181818; }
+  .scrollpane::-webkit-scrollbar { width: 8px; }
+  .scrollpane::-webkit-scrollbar-track { background: #181818; }
+  .scrollpane::-webkit-scrollbar-thumb { background: #2E2E2E; border-radius: 6px; }
+
+  .badge { display: inline-flex; align-items: center; height: 19px; padding: 0 7px; border-radius: 5px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+  .tagchip { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 4px; font-size: 10px; font-weight: 500; background: #1E1E1E; border: 1px solid #2E2E2E; color: #9A9A9A; }
+  .devchip { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; user-select: none; }
+  .icon { display: block; flex-shrink: 0; }
+  .modelrow { cursor: pointer; }
+  .modelrow:hover { border-color: #4A4A4A !important; }
+  .card { background: #181818; border: 1px solid #2E2E2E; border-radius: 10px; }
+  .ctxchip { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 5px; font-size: 11px; font-weight: 700; user-select: none; }
+  .numbox { width: 58px; background: #121212; color: #EDEDED; border: 1px solid #2E2E2E; border-radius: 5px; padding: 3px 8px; font-size: 11px; text-align: right; outline: none; }
+  .numbox:focus { border-color: #D97757; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <div style="display:flex; align-items:center; justify-content:space-between;">
+    <div>
+      <div style="display:flex; align-items:baseline;">
+        <span style="font-family:'Segoe UI Semibold','Segoe UI',sans-serif; font-size:26px; font-weight:600;">Dua</span><span style="font-family:'Segoe UI Semibold','Segoe UI',sans-serif; font-size:26px; font-weight:800; color:#D97757; margin:0 2px;">LLM</span><span style="font-family:'Segoe UI Semibold','Segoe UI',sans-serif; font-size:26px; font-weight:600;"> Portal</span>
+      </div>
+      <div style="font-size:12.5px; color:#9A9A9A;">Run local LLMs split across the GPUs on this PC and others</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div id="releaseWrap"></div>
+      <div id="folderChips" style="display:flex; align-items:center; gap:8px;"></div>
+    </div>
+  </div>
+
+  <!-- Config problems (missing or invalid duallm.config.json) -->
+  <div id="problemBar"></div>
+
+  <div style="display:flex; gap:18px; flex:1; min-height:0;">
+    <!-- Left: model list -->
+    <div style="flex:1.6; display:flex; flex-direction:column; min-height:0;">
+      <div style="display:flex; align-items:center; gap:8px; height:36px; padding:0 12px; background:#181818; border:1px solid #2E2E2E; border-radius:8px; margin-bottom:10px;">
+        <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6E6E6E" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="searchInput" type="text" placeholder="Search models…" autocomplete="off"
+               style="flex:1; background:transparent; border:none; outline:none; color:#EDEDED; font-size:12px;">
+        <span style="font-size:10px; color:#565656; border:1px solid #2E2E2E; border-radius:4px; padding:1px 6px;">Ctrl K</span>
+      </div>
+      <div id="modelList" class="scrollpane" style="flex:1; display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+
+    <!-- Right: configuration -->
+    <div class="scrollpane" style="width:400px; flex-shrink:0; display:flex; flex-direction:column; gap:14px; min-height:0;">
+      <div id="devicesCard" class="card" style="padding:14px 16px;"></div>
+      <div id="ctxCard" class="card" style="padding:14px 16px;"></div>
+      <div id="integRow" class="card" style="padding:12px 16px; display:flex; align-items:center; gap:16px;"></div>
+      <div id="advWrap"></div>
+    </div>
+  </div>
+
+  <!-- Bottom action bar -->
+  <div id="bottomBar" style="display:flex; align-items:center; justify-content:space-between;"></div>
+
+  <!-- Modal -->
+  <div id="modalRoot"></div>
+</div>
+
+<script>
+"use strict";
+var BASE_LADDER = [8192, 16384, 24576, 32768];
+var ACCENT = "#D97757";
+// One shade per GPU, in the order the GPUs are configured, so a card keeps its colour as others are toggled.
+var GPU_COLORS = ["#D97757", "#E4967A", "#EDB89C", "#F3CDB7", "#C96442", "#B5532F", "#F6DCCB", "#9E4A2B"];
+
+var S = {
+  models: [], folder: "", query: "",
+  selectedPath: null,
+  devices: [],            // [{id,type,label,chip,vramGb,hostLabel,on,layers}] straight from duallm.config.json
+  hosts: [], localAddresses: [], integrations: [], problems: [], configPath: "",
+  contextSize: 32768,
+  options: null, maxContext: null, caption: "", measuring: false,
+  modalOpen: false,
+  advancedOpen: false, infoOpen: false,
+  cache: [],              // [{id,label,available,usedBytes,freeBytes,clearing}]
+  releasing: false, releaseMsg: ""
+};
+
+function post(o) { try { if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(o); } catch (e) {} }
+function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function fmtBytes(n) { if (n == null) return "—"; if (n < 1024) return n + " B"; var u = ["KB","MB","GB","TB"], i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1); return (n < 10 ? n.toFixed(1) : Math.round(n)) + " " + u[i]; }
+function selectedModel() { return S.models.filter(function (m) { return m.path === S.selectedPath; })[0] || S.models[0] || null; }
+function gpus() { return S.devices.filter(function (d) { return d.type === "gpu"; }); }
+function rams() { return S.devices.filter(function (d) { return d.type === "ram"; }); }
+function gpuColor(d) { return GPU_COLORS[gpus().indexOf(d) % GPU_COLORS.length]; }
+
+/* A quick client-side "will it fit" heuristic from the nominal VRAM in the config. The real limit is
+   measured by the host (llama-fit-params against each card's free memory) and replaces this once it lands. */
+function computeFit(sizeGB) {
+  var active = gpus().filter(function (d) { return d.on; });
+  var poolGB = active.reduce(function (a, d) { return a + d.vramGb; }, 0);
+  var overflow = rams().some(function (d) { return d.on; });
+  var segments = [], ctxLabel, ctxColor, maxCtx;
+  if (poolGB === 0) {
+    ctxLabel = overflow ? "CPU only · slow" : "No device selected";
+    ctxColor = overflow ? "#D9A73F" : "#E5484D";
+    maxCtx = overflow ? 4096 : 0;
+  } else {
+    var headroom = poolGB - sizeGB;
+    if (headroom <= 0) {
+      if (overflow) { ctxLabel = "~4K ctx · overflow"; ctxColor = "#D9A73F"; maxCtx = 4096; }
+      else { ctxLabel = "Won't fit"; ctxColor = "#E5484D"; maxCtx = 0; }
+    } else {
+      var raw = Math.floor(headroom * 4500);
+      maxCtx = Math.max(2048, Math.min(262144, raw));
+      var k = Math.round(maxCtx / 1024);
+      ctxLabel = maxCtx <= 8192 ? ("~" + k + "K ctx · tight") : ("~" + k + "K ctx");
+      ctxColor = maxCtx <= 8192 ? "#D9A73F" : "#9A9A9A";
+    }
+    var usedFrac = Math.min(1, sizeGB / poolGB);
+    segments = active.map(function (d) { return { pct: Math.round((d.vramGb / poolGB) * usedFrac * 100), color: gpuColor(d) }; });
+  }
+  return { ctxLabel: ctxLabel, ctxColor: ctxColor, segments: segments, maxCtx: maxCtx, fits: maxCtx > 0, poolGB: poolGB, overflow: overflow };
+}
+
+function chipStyle(on, isRam, onSub, offSub) {
+  if (on) {
+    return isRam
+      ? { bg: "rgba(217,167,63,.14)", border: "#D9A73F", color: "#E9CB7C", sub: onSub }
+      : { bg: "rgba(217,119,87,.16)", border: ACCENT, color: "#F0B99C", sub: onSub };
+  }
+  return { bg: "#1E1E1E", border: "#2E2E2E", color: "#6E6E6E", sub: offSub };
+}
+
+/* ---------- renderers ---------- */
+
+var SMALL_BTN = "background:#232323; color:#E9CB7C; font-weight:600; font-size:11px; padding:6px 14px; border:1px solid #3A3A3A; border-radius:6px; cursor:pointer;";
+
+function renderProblems() {
+  var el = document.getElementById("problemBar");
+  if (!S.problems.length) { el.innerHTML = ""; return; }
+  el.innerHTML =
+    '<div style="display:flex; align-items:flex-start; gap:12px; padding:10px 14px; background:rgba(217,167,63,.10); border:1px solid #6B5320; border-radius:8px;">' +
+      '<div style="flex:1; font-size:11.5px; color:#E9CB7C; line-height:1.55;">' +
+        S.problems.map(function (p) { return "<div>" + esc(p) + "</div>"; }).join("") +
+      "</div>" +
+      '<button data-act="openConfig" style="' + SMALL_BTN + '">Open config</button>' +
+      '<button data-act="reloadConfig" style="' + SMALL_BTN + '">Reload config</button>' +
+    "</div>";
+}
+
+function renderRelease() {
+  var el = document.getElementById("releaseWrap");
+  if (S.releasing) {
+    el.innerHTML = '<div style="display:flex; align-items:center; height:26px; padding:0 12px; background:#1E1E1E; border:1px solid #2E2E2E; border-radius:6px; font-size:11px; color:#9A9A9A;">Releasing…</div>';
+    return;
+  }
+  if (S.releaseMsg) {
+    el.innerHTML = '<div style="display:flex; align-items:center; height:26px; padding:0 12px; background:#1E1E1E; border:1px solid #2E2E2E; border-radius:6px; font-size:11px; color:#6FCF97;">' + esc(S.releaseMsg) + "</div>";
+    return;
+  }
+  el.innerHTML = '<button data-act="releaseGpus" title="Stop the local model server and any remote RPC workers, even ones only started to measure free VRAM" ' +
+    'style="display:flex; align-items:center; height:26px; padding:0 12px; background:#1E1E1E; border:1px solid #3A2A26; border-radius:6px; font-size:11px; font-weight:600; color:#E4967A; cursor:pointer;">Release GPUs</button>';
+}
+
+function renderFolders() {
+  var el = document.getElementById("folderChips");
+  var folderIcon = '<svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9A9A9A" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>';
+  var chip = '<div style="display:flex; align-items:center; height:24px; padding:0 10px; background:#181818; border:1px solid #2E2E2E; border-radius:6px;">' +
+             '<span style="font-size:11.5px; color:#C9C9C9; font-family:\'Cascadia Code\',Consolas,monospace;">' + esc(S.folder) + '</span></div>';
+  el.innerHTML = folderIcon + chip;
+}
+
+function renderList() {
+  var box = document.getElementById("modelList");
+  var q = (S.query || "").toLowerCase();
+  var filtered = S.models.filter(function (m) {
+    if (!q) return true;
+    var hay = (m.family + " " + m.name + " " + (m.tags || []).join(" ") + " " + m.quant).toLowerCase();
+    return hay.indexOf(q) !== -1;
+  });
+  document.getElementById("searchInput").placeholder = "Search " + S.models.length + " models…";
+
+  if (S.models.length === 0) {
+    box.innerHTML = '<div style="padding:24px; text-align:center; color:#6E6E6E; font-size:12px;">No GGUF models found in the folder.</div>';
+    return;
+  }
+  if (filtered.length === 0) {
+    box.innerHTML = '<div style="padding:24px; text-align:center; color:#6E6E6E; font-size:12px;">No models match "' + esc(S.query) + '".</div>';
+    return;
+  }
+
+  box.innerHTML = filtered.map(function (m) {
+    var fit = computeFit(m.sizeGB);
+    var sel = m.path === S.selectedPath;
+    var tags = m.tags || [];
+    var tagHtml = tags.slice(0, 2).map(function (t) { return '<span class="tagchip">' + esc(t) + "</span>"; }).join("");
+    if (tags.length > 2) tagHtml += '<span class="tagchip" style="color:#6E6E6E;">+' + (tags.length - 2) + "</span>";
+    var paramsHtml = m.params ? '<span class="badge" style="background:#232323; color:#9A9A9A;">' + esc(m.params) + "</span>" : "";
+    var segHtml = fit.segments.map(function (s) { return '<div style="width:' + s.pct + "%; background:" + s.color + ';"></div>'; }).join("");
+
+    return '<div class="modelrow" data-act="pick" data-path="' + esc(m.path) + '" style="display:flex; align-items:center; gap:14px; padding:12px 14px; background:' +
+      (sel ? "#232323" : "#1E1E1E") + "; border:" + (sel ? "1.5px solid " + ACCENT : "1px solid #2E2E2E") + '; border-radius:10px;">' +
+      '<div style="flex:1; min-width:0;">' +
+        '<div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:5px;">' +
+          '<span class="badge" style="background:#333333; color:#EDEDED; font-weight:700;">' + esc(m.family) + "</span>" +
+          paramsHtml +
+          '<span class="badge" style="background:rgba(217,119,87,.14); color:#E4967A; border:1px solid rgba(217,119,87,.35);">' + esc(m.quant) + "</span>" +
+          tagHtml +
+        "</div>" +
+        '<div style="display:flex; align-items:baseline; gap:10px;">' +
+          '<span style="font-family:\'Cascadia Code\',Consolas,monospace; font-size:11px; color:' + (sel ? "#E4967A" : "#6E6E6E") + '; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + esc(m.name) + "</span>" +
+          '<span style="font-size:10.5px; color:' + (sel ? "#C9C9C9" : "#9A9A9A") + '; white-space:nowrap;">' + m.sizeGB.toFixed(2) + " GB</span>" +
+        "</div>" +
+      "</div>" +
+      '<div style="width:90px; height:5px; border-radius:3px; overflow:hidden; display:flex; background:#121212; flex-shrink:0;">' + segHtml + "</div>" +
+      '<span style="font-size:11px; font-weight:600; color:' + fit.ctxColor + '; width:96px; text-align:right; flex-shrink:0;">' + esc(fit.ctxLabel) + "</span>" +
+    "</div>";
+  }).join("");
+}
+
+function renderDevices() {
+  var el = document.getElementById("devicesCard");
+  var allGpus = gpus();
+  var totalGB = allGpus.reduce(function (a, d) { return a + d.vramGb; }, 0);
+  var aggPoolGB = allGpus.reduce(function (a, d) { return a + (d.on ? d.vramGb : 0); }, 0);
+  var aggHtml = allGpus.filter(function (d) { return d.on; }).map(function (d) {
+    return '<div style="width:' + Math.round(d.vramGb / (totalGB || 1) * 100) + "%; background:" + gpuColor(d) + ';"></div>';
+  }).join("");
+
+  function chip(d) {
+    var isRam = d.type === "ram";
+    var st = isRam ? chipStyle(d.on, true, "overflow", "off") : chipStyle(d.on, false, d.vramGb + "GB", "excluded");
+    var tip = d.label + (d.hostLabel ? " on " + d.hostLabel : " (this PC)");
+    return '<div class="devchip" data-act="dev" data-id="' + esc(d.id) + '" title="' + esc(tip) + '" style="background:' + st.bg + "; border:1px solid " + st.border + "; color:" + st.color + ';">' +
+      esc(d.chip) + ' <span style="opacity:.7; font-weight:400;">' + st.sub + "</span></div>";
+  }
+
+  var info = S.infoOpen
+    ? '<div style="display:flex; align-items:flex-start; gap:8px; padding:9px 10px; background:#121212; border:1px solid #2E2E2E; border-radius:7px; margin-bottom:10px;">' +
+      '<span style="font-size:10.5px; color:#9A9A9A; line-height:1.5;"><b style="color:#F0B99C;">In pool</b> GPUs share the model. <b style="color:#E9CB7C;">Overflow</b> RAM only fills once the GPUs above are full — the slow path.</span></div>'
+    : "";
+
+  el.innerHTML =
+    '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">' +
+      '<div style="display:flex; align-items:center; gap:6px;">' +
+        '<span style="font-size:12.5px; font-weight:600;">Devices</span>' +
+        '<button data-act="info" style="display:flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; background:#232323; border:none; cursor:pointer; padding:0;"><span style="font-size:9.5px; font-weight:700; color:#6E6E6E;">?</span></button>' +
+      "</div>" +
+      '<span style="font-size:10px; color:#9A9A9A;">' + aggPoolGB + " GB in pool</span>" +
+    "</div>" +
+    info +
+    '<div style="height:10px; border-radius:5px; background:#121212; border:1px solid #2E2E2E; overflow:hidden; display:flex; margin-bottom:10px;">' + aggHtml + "</div>" +
+    '<div style="display:flex; flex-wrap:wrap; gap:6px;">' + S.devices.map(chip).join("") + "</div>";
+}
+
+function ladderChips() {
+  var set = {};
+  BASE_LADDER.forEach(function (v) { set[v] = true; });
+  (S.options || []).forEach(function (v) { set[v] = true; });
+  return Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+}
+
+function renderCtx() {
+  var el = document.getElementById("ctxCard");
+  var m = selectedModel();
+  var selFit = m ? computeFit(m.sizeGB) : { maxCtx: 0, fits: false, poolGB: 0 };
+  var effMax = (S.options && S.maxContext != null) ? S.maxContext : selFit.maxCtx;
+
+  var chipsHtml = ladderChips().map(function (v) {
+    var eligible = v <= effMax;
+    var active = eligible && S.contextSize === v;
+    var bg, color, border;
+    if (active) { bg = ACCENT; color = "#121212"; border = "1px solid " + ACCENT; }
+    else if (eligible) { bg = "#1E1E1E"; color = "#9A9A9A"; border = "1px solid #2E2E2E"; }
+    else { bg = "#161616"; color = "#565656"; border = "1px dashed #2E2E2E"; }
+    var attrs = eligible ? ('data-act="ctx" data-val="' + v + '" style="cursor:pointer;') : ('style="cursor:default;');
+    return '<span class="ctxchip" ' + attrs + " background:" + bg + "; color:" + color + "; border:" + border + ';">' + Math.round(v / 1024) + "K</span>";
+  }).join("");
+
+  var caption;
+  if (S.measuring) caption = "Measuring the context that fits these devices…";
+  else if (S.caption) caption = S.caption;
+  else if (!m) caption = "Select a model.";
+  else if (selFit.fits) caption = "Up to " + Math.round(selFit.maxCtx / 1024) + "K for " + m.family + " on the current pool.";
+  else caption = "Adjust devices — " + m.family + " needs more than " + selFit.poolGB + " GB.";
+
+  el.innerHTML =
+    '<div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">Context Size</div>' +
+    '<div style="display:flex; flex-wrap:wrap; gap:6px;">' + chipsHtml + "</div>" +
+    '<div style="font-size:10px; color:#6E6E6E; margin-top:8px;">' + esc(caption) + "</div>";
+}
+
+function renderInteg() {
+  var el = document.getElementById("integRow");
+  var count = S.integrations.filter(function (i) { return i.on; }).length;
+  var mcp = S.integrations.length
+    ? '<button data-act="openMcp" style="display:flex; align-items:center; gap:6px; background:transparent; border:none; color:#EDEDED; font-size:11.5px; cursor:pointer;">' +
+        '<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + ACCENT + '" stroke-width="1.8"><path d="M12 2 2 7l10 5 10-5-10-5ZM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>' +
+        'MCP <span style="color:' + ACCENT + '; font-weight:700;">' + count + "</span>" +
+      "</button>"
+    : '<span style="font-size:11px; color:#6E6E6E;" title="Add entries under integrations in the config to start MCP servers alongside a model">No integrations configured</span>';
+  el.innerHTML =
+    mcp +
+    '<div style="flex:1;"></div>' +
+    '<button data-act="adv" style="display:flex; align-items:center; gap:4px; background:transparent; border:none; color:#6E6E6E; font-size:11px; cursor:pointer;">Advanced' +
+      '<svg class="icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6E6E6E" stroke-width="2.4" style="transform:' + (S.advancedOpen ? "rotate(90deg)" : "rotate(0deg)") + ';"><path d="M9 6l6 6-6 6"/></svg>' +
+    "</button>";
+}
+
+function row(label, value) {
+  return '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;"><span style="font-size:11px; color:#9A9A9A;">' + esc(label) + '</span><span style="font-size:11px; color:#C9C9C9;">' + esc(value) + "</span></div>";
+}
+
+function renderAdvanced() {
+  var el = document.getElementById("advWrap");
+  if (!S.advancedOpen) { el.innerHTML = ""; return; }
+  var divider = '<div style="height:1px; background:#2E2E2E;"></div>';
+
+  var ramRows = rams().map(function (d) {
+    return '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">' +
+      '<span style="font-size:11px; color:#9A9A9A;">Layers to ' + esc(d.label) + '</span>' +
+      '<input class="numbox moe" data-id="' + esc(d.id) + '" type="number" min="0" value="' + d.layers + '"></div>';
+  }).join("") || '<div style="font-size:11px; color:#6E6E6E;">No RAM devices are configured.</div>';
+
+  var machines = row("This PC", S.localAddresses.length ? S.localAddresses.join(", ") : "—") +
+    S.hosts.map(function (h) { return row(h.label, h.address); }).join("");
+
+  el.innerHTML =
+    '<div class="card" style="padding:14px 16px; display:flex; flex-direction:column; gap:12px;">' +
+      "<div>" +
+        '<div style="font-size:11.5px; font-weight:600; color:#C9C9C9; margin-bottom:8px;">Expert Offload</div>' +
+        '<div style="font-size:10px; color:#6E6E6E; margin-bottom:8px; line-height:1.5;">Moves MoE expert layers (counted from the front) onto RAM instead of the GPUs. 0 keeps them on GPU. No effect on dense models.</div>' +
+        ramRows +
+      "</div>" +
+      divider +
+      '<div><div style="font-size:11.5px; font-weight:600; color:#C9C9C9; margin-bottom:6px;">Machines</div>' + machines + "</div>" +
+      divider +
+      renderCacheSections() +
+      '<div><div style="font-size:11.5px; font-weight:600; color:#C9C9C9; margin-bottom:6px;">Configuration</div>' +
+        '<div style="font-size:10px; color:#6E6E6E; margin-bottom:8px; line-height:1.5; word-break:break-all;">' + esc(S.configPath) + "</div>" +
+        '<div style="display:flex; gap:8px;"><button data-act="openConfig" style="' + SMALL_BTN + '">Open config</button><button data-act="reloadConfig" style="' + SMALL_BTN + '">Reload config</button></div>' +
+      "</div>" +
+    "</div>";
+}
+
+function renderCacheSections() {
+  if (!S.cache.length) return "";
+  var html = S.cache.map(function (c) {
+    var body;
+    if (c.clearing) body = '<div style="font-size:11px; color:#6E6E6E;">Clearing…</div>';
+    else if (!c.available) body = '<div style="font-size:11px; color:#6E6E6E;">Measuring…</div>';
+    else body = row("Cache size", fmtBytes(c.usedBytes)) + row("Free on disk", fmtBytes(c.freeBytes)) +
+      '<div style="margin-top:6px;"><button data-act="clearCache" data-host="' + esc(c.id) + '" style="' + SMALL_BTN + '">Clear cache</button></div>';
+    return '<div><div style="font-size:11.5px; font-weight:600; color:#C9C9C9; margin-bottom:6px;">' + esc(c.label) + ' RPC cache</div>' +
+      '<div style="font-size:10px; color:#6E6E6E; margin-bottom:8px; line-height:1.5;">Weights sent to this machine\'s workers are cached on its disk, so a re-launch of the same model skips the network transfer.</div>' +
+      body + "</div>";
+  }).join('<div style="height:1px; background:#2E2E2E; margin:12px 0;"></div>');
+  return html + '<div style="height:1px; background:#2E2E2E;"></div>';
+}
+
+function renderBottom() {
+  var el = document.getElementById("bottomBar");
+  var m = selectedModel();
+  var selFit = m ? computeFit(m.sizeGB) : { fits: false };
+  var blocked = !m || !selFit.fits;
+  var statusText, statusColor;
+  if (!m) { statusText = "No model selected."; statusColor = "#E5484D"; }
+  else if (blocked) { statusText = m.family + " won't fit the current device pool — include another GPU or enable RAM overflow."; statusColor = "#E5484D"; }
+  else { statusText = m.family + " selected · Ready to launch."; statusColor = "#9A9A9A"; }
+
+  var warn = blocked
+    ? '<svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E5484D" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
+    : "";
+
+  el.innerHTML =
+    '<div style="display:flex; align-items:center; gap:6px;">' + warn + '<span style="font-size:12px; color:' + statusColor + ';">' + esc(statusText) + "</span></div>" +
+    '<button ' + (blocked ? "" : 'data-act="launch"') + ' style="background:' + ACCENT + "; color:#121212; font-weight:700; font-size:13.5px; padding:10px 28px; border:none; border-radius:8px; cursor:" +
+      (blocked ? "not-allowed" : "pointer") + "; opacity:" + (blocked ? "0.45" : "1") + ';">Launch Chat</button>';
+}
+
+function renderModal() {
+  var el = document.getElementById("modalRoot");
+  if (!S.modalOpen) { el.innerHTML = ""; return; }
+
+  var rows = S.integrations.map(function (i) {
+    var bg = i.on ? "rgba(217,119,87,.16)" : "#121212";
+    var border = i.on ? ACCENT : "#2E2E2E";
+    var color = i.on ? "#F0B99C" : "#6E6E6E";
+    return '<div style="display:flex; align-items:center; gap:12px; padding:12px 14px; background:#1E1E1E; border:1px solid #2E2E2E; border-radius:9px;">' +
+      '<div style="width:34px; height:34px; border-radius:8px; background:#121212; display:flex; align-items:center; justify-content:center;"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="' + ACCENT + '" stroke-width="1.8"><path d="M12 2 2 7l10 5 10-5-10-5ZM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>' +
+      '<div style="flex:1;"><div style="font-size:13px; font-weight:600;">' + esc(i.name) + '</div><div style="font-size:11px; color:#6E6E6E;">' + esc(i.description) + "</div></div>" +
+      '<button data-act="integ" data-id="' + esc(i.id) + '" style="display:flex; align-items:center; height:22px; padding:0 10px; border-radius:11px; cursor:pointer; background:' + bg + "; border:1px solid " + border + ';"><span style="font-size:10px; font-weight:700; color:' + color + ';">' + (i.on ? "ENABLED" : "DISABLED") + "</span></button>" +
+    "</div>";
+  }).join("");
+
+  el.innerHTML =
+    '<div style="position:absolute; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center;">' +
+      '<div style="width:520px; background:#181818; border:1px solid #2E2E2E; border-radius:14px; box-shadow:0 24px 60px rgba(0,0,0,.5); overflow:hidden;">' +
+        '<div style="padding:18px 22px 0 22px;">' +
+          '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;"><span style="font-size:16px; font-weight:600;">MCP Servers</span>' +
+            '<button data-act="close" style="background:transparent; border:none; cursor:pointer; padding:0;"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6E6E6E" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+          "</div>" +
+          '<div style="height:1px; background:#2E2E2E;"></div>' +
+        "</div>" +
+        '<div style="padding:16px 22px; display:flex; flex-direction:column; gap:8px;">' + rows + "</div>" +
+        '<div style="padding:14px 22px; border-top:1px solid #2E2E2E; display:flex; justify-content:flex-end;"><button data-act="close" style="background:' + ACCENT + '; color:#121212; font-weight:700; font-size:12.5px; padding:9px 20px; border:none; border-radius:7px; cursor:pointer;">Done</button></div>' +
+      "</div>" +
+    "</div>";
+}
+
+function render() {
+  renderProblems();
+  renderRelease();
+  renderFolders();
+  renderList();
+  renderDevices();
+  renderCtx();
+  renderInteg();
+  renderAdvanced();
+  renderBottom();
+  renderModal();
+}
+
+/* ---------- actions ---------- */
+
+function deviceById(id) { return S.devices.filter(function (d) { return d.id === id; })[0]; }
+
+function sendDevices() {
+  var map = {};
+  S.devices.forEach(function (d) { map[d.id] = d.on; });
+  post({ type: "setDevices", devices: map });
+}
+
+function sendExpert() {
+  var map = {};
+  rams().forEach(function (d) { map[d.id] = d.layers; });
+  post({ type: "setExpert", layers: map });
+}
+
+function onAction(act, node) {
+  if (act === "pick") {
+    var p = node.getAttribute("data-path");
+    if (p === S.selectedPath) return;
+    S.selectedPath = p; S.measuring = true; S.options = null; S.maxContext = null; S.caption = "";
+    render(); post({ type: "selectModel", path: p });
+  } else if (act === "dev") {
+    var d = deviceById(node.getAttribute("data-id"));
+    if (!d) return;
+    d.on = !d.on;
+    S.measuring = true; S.options = null; S.maxContext = null; S.caption = "";
+    render(); sendDevices();
+  } else if (act === "ctx") {
+    var v = parseInt(node.getAttribute("data-val"), 10);
+    S.contextSize = v; render(); post({ type: "setContext", value: v });
+  } else if (act === "info") {
+    S.infoOpen = !S.infoOpen; renderDevices();
+  } else if (act === "adv") {
+    S.advancedOpen = !S.advancedOpen; renderInteg(); renderAdvanced();
+    if (S.advancedOpen) post({ type: "refreshCache" });
+  } else if (act === "clearCache") {
+    var host = S.cache.filter(function (c) { return c.id === node.getAttribute("data-host"); })[0];
+    if (host && confirm("Clear the RPC cache on " + host.label + "? The next launch of any model will have to transfer weights over the network again.")) {
+      host.clearing = true; renderAdvanced();
+      post({ type: "clearCache", hostId: host.id });
+    }
+  } else if (act === "openMcp") {
+    S.modalOpen = true; renderModal();
+  } else if (act === "close") {
+    S.modalOpen = false; renderModal();
+  } else if (act === "integ") {
+    var i = S.integrations.filter(function (x) { return x.id === node.getAttribute("data-id"); })[0];
+    if (!i) return;
+    i.on = !i.on; renderModal(); renderInteg(); post({ type: "setIntegration", id: i.id, enabled: i.on });
+  } else if (act === "launch") {
+    post({ type: "launch" });
+  } else if (act === "releaseGpus") {
+    S.releasing = true; S.releaseMsg = ""; renderRelease();
+    post({ type: "releaseGpus" });
+  } else if (act === "openConfig") {
+    post({ type: "openConfig" });
+  } else if (act === "reloadConfig") {
+    post({ type: "reloadConfig" });
+  }
+}
+
+document.getElementById("app").addEventListener("click", function (e) {
+  var node = e.target.closest("[data-act]");
+  if (node) onAction(node.getAttribute("data-act"), node);
+});
+document.getElementById("app").addEventListener("input", function (e) {
+  if (e.target.id === "searchInput") { S.query = e.target.value; renderList(); }
+});
+document.getElementById("app").addEventListener("change", function (e) {
+  if (e.target.classList && e.target.classList.contains("moe")) {
+    var d = deviceById(e.target.getAttribute("data-id"));
+    if (d) { d.layers = Math.max(0, parseInt(e.target.value, 10) || 0); sendExpert(); }
+  }
+});
+document.addEventListener("keydown", function (e) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); document.getElementById("searchInput").focus(); }
+});
+
+/* ---------- inbound from C# ---------- */
+
+window.applyInit = function (d) {
+  S.models = (d.models || []).map(function (m) { return { path: m.path, name: m.name, family: m.family, params: m.params, quant: m.quant, tags: m.tags || [], sizeGB: m.sizeGB }; });
+  S.folder = d.folder || "";
+  S.devices = (d.devices || []).map(function (x) {
+    return { id: x.id, type: x.type, label: x.label, chip: x.chip || x.label, vramGb: x.vramGb || 0, hostLabel: x.hostLabel || null, on: !!x.on, layers: x.layers || 0 };
+  });
+  S.hosts = d.hosts || [];
+  S.localAddresses = d.localAddresses || [];
+  S.integrations = (d.integrations || []).map(function (i) { return { id: i.id, name: i.name, description: i.description || "", on: !!i.on }; });
+  S.problems = d.problems || [];
+  S.configPath = d.configPath || "";
+  S.cache = S.hosts.filter(function (h) { return h.hasCache; }).map(function (h) { return { id: h.id, label: h.label, available: false, usedBytes: 0, freeBytes: 0, clearing: false }; });
+  S.selectedPath = d.selectedPath || (S.models[0] && S.models[0].path) || null;
+  S.options = null; S.maxContext = null; S.caption = "";
+  S.measuring = S.models.length > 0;
+
+  var m = selectedModel();
+  if (m) {
+    var fit = computeFit(m.sizeGB);
+    var elig = BASE_LADDER.filter(function (v) { return v <= fit.maxCtx; });
+    S.contextSize = elig.length ? elig[elig.length - 1] : (fit.maxCtx > 0 ? fit.maxCtx : 8192);
+    post({ type: "setContext", value: S.contextSize });
+  }
+  render();
+};
+
+window.applyCache = function (d) {
+  var byId = {};
+  ((d && d.hosts) || []).forEach(function (h) { byId[h.id] = h; });
+  S.cache.forEach(function (c) {
+    var h = byId[c.id];
+    c.clearing = false;
+    c.available = !!(h && h.available);
+    c.usedBytes = (h && typeof h.usedBytes === "number") ? h.usedBytes : 0;
+    c.freeBytes = (h && typeof h.freeBytes === "number") ? h.freeBytes : 0;
+  });
+  if (S.advancedOpen) renderAdvanced();
+};
+
+window.applyEstimate = function (d) {
+  S.measuring = false;
+  if (d.caption != null) S.caption = d.caption;
+  if (d.options) { S.options = d.options; S.maxContext = d.maxContext; if (typeof d.contextSize === "number") S.contextSize = d.contextSize; }
+  render();
+};
+
+window.applyReleased = function (d) {
+  S.releasing = false;
+  S.releaseMsg = (d && d.message) || "Released.";
+  renderRelease();
+  setTimeout(function () { S.releaseMsg = ""; renderRelease(); }, 4000);
+};
+
+render();
+post({ type: "ready" });
+</script>
+</body>
+</html>

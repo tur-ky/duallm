@@ -1,0 +1,72 @@
+// DualLLM Portal configuration. Copy this file to duallm.config.json (next to DualLlmPortal.exe) and edit.
+// Comments and trailing commas are allowed. Unknown option names are reported, not ignored.
+// Full reference: README.md ("Configuration").
+{
+  // Folder scanned for *.gguf models. Relative paths are relative to the folder DualLlmPortal.exe is in.
+  "modelsDir": "llm_models",
+
+  "llamaServer": {
+    // Built by scripts\build-llamacpp.ps1. Both must come from the same llama.cpp build.
+    "path": "llama.cpp\\build\\bin\\Release\\llama-server.exe",
+    "fitParamsPath": "llama.cpp\\build\\bin\\Release\\llama-fit-params.exe",
+    "port": 8080,
+    // 127.0.0.1 keeps the chat on this PC. Use 0.0.0.0 to reach it from other devices (and firewall it).
+    "bindAddress": "127.0.0.1",
+    // Applied to both the K and V cache. "q8_0" roughly halves them versus "f16".
+    "kvCacheType": "q8_0"
+    // "cudaPath": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0",  // default: this PC's CUDA_PATH
+    // "extraArgs": "--no-webui"                                                    // appended to every launch
+  },
+
+  // Loopback HTTP API other programs can use to load models (docs/CONTROL_API.md).
+  "controlApi": { "enabled": true, "port": 8091 },
+
+  // Other computers that serve devices through llama.cpp RPC workers, started for you over ssh.
+  // Needs: key-based ssh login (run `ssh <ssh>` once by hand to trust the host key) and a
+  // ggml-rpc-server built from the same llama.cpp commit as this PC's llama-server.
+  "hosts": [
+    {
+      "id": "worker",
+      "label": "Linux box",                       // shown in the UI
+      "ssh": "me@worker.local",                   // ssh destination: user@host or an alias from ~/.ssh/config
+      // "sshOptions": ["-i", "C:\\keys\\worker", "-p", "2222"],
+      "address": "192.168.1.50",                  // how THIS PC reaches the worker's RPC ports
+      "rpcServerPath": "/home/me/llama.cpp/build/bin/ggml-rpc-server",
+      // Optional: show the worker's tensor cache (rpc-server -c) with a Clear button.
+      "cacheDir": "/home/me/.cache/llama.cpp/rpc",
+      "cacheVolume": "/home/me"
+    }
+  ],
+
+  // Every place the model may be put, in the order llama.cpp fills them. List GPUs before RAM so RAM
+  // is only used once the cards are full.
+  //   type        "gpu" (a CUDA card) or "ram" (system memory used as overflow)
+  //   host        omit for this PC; otherwise the id of a host above
+  //   label/chip  full name for messages / short text on the toggle
+  //   vramGb      nominal size, only for the quick "will it fit" bar (the real limit is measured)
+  //   cudaIndex   which card on its machine (nvidia-smi index)
+  //   port        the RPC worker's port (remote devices; must be unique per host)
+  //   extraArgs   extra ggml-rpc-server arguments, e.g. "-c" to cache tensors on the worker's disk
+  //   default     ticked when the portal starts
+  "devices": [
+    { "id": "local-gpu", "type": "gpu", "label": "Local GPU", "chip": "GPU", "vramGb": 12, "cudaIndex": 0, "default": true },
+    { "id": "local-ram", "type": "ram", "label": "this PC's RAM", "chip": "RAM (PC)" },
+    { "id": "worker-gpu0", "type": "gpu", "host": "worker", "label": "Worker GPU 0", "chip": "W-GPU0", "vramGb": 8, "cudaIndex": 0, "port": 50052, "extraArgs": "-c", "default": true },
+    // { "id": "worker-gpu1", "type": "gpu", "host": "worker", "label": "Worker GPU 1", "chip": "W-GPU1", "vramGb": 8, "cudaIndex": 1, "port": 50054, "extraArgs": "-c" },
+    { "id": "worker-ram", "type": "ram", "host": "worker", "label": "the worker's RAM", "chip": "Worker RAM", "port": 50053, "threads": 8 }
+  ],
+
+  // Optional helper servers (MCP bridges) that can be switched on per session. "{home}" expands to the
+  // folder DualLlmPortal.exe is in. While enabled they are registered in llama.cpp's web UI.
+  "integrations": [
+    // {
+    //   "id": "my-mcp",
+    //   "name": "My MCP server",
+    //   "description": "What it does",
+    //   "command": "uv",
+    //   "args": ["--directory", "{home}\\mcp\\my-server", "run", "my-server", "--port", "9191"],
+    //   "url": "http://127.0.0.1:9191/",
+    //   "processName": "my-server"
+    // }
+  ]
+}
