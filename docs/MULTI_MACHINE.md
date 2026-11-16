@@ -2,7 +2,7 @@
 
 The portal can borrow GPUs and RAM from other computers on your network. Each borrowed device is a
 `ggml-rpc-server` process that the portal starts over ssh; the portal PC's `llama-server` then reaches
-it with `--rpc host:port`. Workers must run Linux. The portal PC is Windows.
+it with `--rpc host:port`. Workers can run Linux or Windows ([Windows workers](#windows-workers) has the extra steps). The portal PC is Windows.
 
 ## 1. Build the worker
 
@@ -89,6 +89,95 @@ Notes:
 Tick the remote device, pick a small model, and launch. In `portal-llama-server.log` you should see
 llama.cpp list `RPC0` among its devices and place layers on it. On the worker, `nvidia-smi` shows memory in use
 and `pgrep -a ggml-rpc-server` shows the process. After **Release GPUs**, both should be empty again.
+
+## Windows workers
+
+A Windows PC or laptop with an NVIDIA card can be a worker too. Set `"os": "windows"` on its host and the
+portal sends it PowerShell commands instead of Linux ones. It works whether the laptop's ssh server hands
+commands to cmd.exe (the default) or to PowerShell. Everything else in steps 1 to 4 applies, with these
+differences. Run the commands below in **PowerShell as administrator on the worker** unless they say otherwise.
+
+### Build
+
+Clone this repository on the worker and build with the **same ref** as the portal PC. It needs the same
+toolchain as the portal PC (Visual Studio 2022 or Build Tools with C++, CMake, git, CUDA Toolkit):
+
+```powershell
+.\scripts\build-llamacpp.ps1 -Ref <ref>
+```
+
+The worker binary is then `<clone>\llama.cpp\build\bin\Release\ggml-rpc-server.exe`. The script also builds
+`llama-server`, which the worker does not need but which does no harm.
+
+### Turn on the ssh server
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service sshd -StartupType Automatic
+```
+
+Installing it also opens port 22 in Windows Firewall. Your ssh user name is the part after the backslash in
+`whoami`.
+
+Where the portal PC's public key goes depends on the worker account:
+
+- **Administrator accounts** (the usual case on a personal laptop): Windows ignores `~\.ssh\authorized_keys`
+  for administrators. The key goes in `C:\ProgramData\ssh\administrators_authorized_keys`, and that file must
+  be readable only by Administrators and SYSTEM, or sshd ignores it:
+
+  ```powershell
+  Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value '<the line from id_ed25519.pub on the portal PC>'
+  icacls.exe C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+  ```
+
+- **Standard accounts**: the key goes in `C:\Users\<you>\.ssh\authorized_keys` on the worker, as on Linux.
+
+Then, **on the portal PC**, log in once to trust the host key: `ssh me@laptop hostname` (use `hostname` rather
+than `true`, which cmd.exe does not have).
+
+### Open the worker ports
+
+Windows asks about the firewall only when a program on the desktop starts listening. A worker started over
+ssh has no desktop, so nothing asks and the connection is silently blocked. Add the rule yourself, limited to
+the portal PC, with one port per device you configure:
+
+```powershell
+New-NetFirewallRule -DisplayName "DualLLM RPC workers" -Direction Inbound -Protocol TCP `
+  -LocalPort 50052,50053 -RemoteAddress <portal PC's IP> -Profile Private -Action Allow
+```
+
+Make sure the worker's network is set to **Private** (Settings, Network & internet, the connection's properties).
+
+### Config
+
+```jsonc
+"hosts": [
+  { "id": "laptop", "label": "Laptop", "ssh": "me@192.168.1.60", "os": "windows",
+    "address": "192.168.1.60",
+    "rpcServerPath": "C:\\Users\\me\\duallm\\llama.cpp\\build\\bin\\Release\\ggml-rpc-server.exe" }
+],
+"devices": [
+  { "id": "laptop-gpu", "type": "gpu", "host": "laptop", "label": "Laptop RTX 3050", "chip": "3050",
+    "vramGb": 6, "cudaIndex": 0, "port": 50052, "extraArgs": "-c" }
+]
+```
+
+For the cache controls, llama.cpp keeps the tensor cache under `%LOCALAPPDATA%\llama.cpp\rpc` on Windows
+(unless `LLAMA_CACHE` is set), so `"cacheDir": "C:\\Users\\me\\AppData\\Local\\llama.cpp\\rpc"` and
+`"cacheVolume": "C:\\"`. Check that the folder exists after a first load with `-c`.
+
+### What is different on Windows
+
+- **The split check reads the whole card.** Windows does not report how much GPU memory each program uses
+  (nvidia-smi shows `[N/A]`), so for a Windows host the portal compares the card's total memory in use before
+  and after the load. Anything else that grabs GPU memory on the worker during the load, such as a game,
+  skews that number.
+- **Stopping always ends the process outright**, by name (`ggml-rpc-server`), like the forced stop on Linux.
+  A `ggml-rpc-server` you started yourself on that machine is stopped too.
+- **Laptops**: keep it plugged in (on battery the GPU slows down a lot), set sleep to Never when plugged in,
+  and set closing the lid to Do nothing if you run it closed. If the laptop sleeps, its worker disappears
+  mid-chat. Use Ethernet if you can: Wi-Fi makes the first load slower and adds a little delay to every token.
 
 ## Opening the chat to other devices
 

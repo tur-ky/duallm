@@ -37,6 +37,11 @@ internal sealed class RemoteWorkers
 
     /// <summary>The command a host runs to serve one device. Public so it can be tested.</summary>
     public static string BuildWorkerCommand(HostConfig host, DeviceConfig device)
+        => host.IsWindows
+            ? Shell.PowerShellCommand(BuildWindowsWorkerScript(host, device))
+            : BuildPosixWorkerCommand(host, device);
+
+    private static string BuildPosixWorkerCommand(HostConfig host, DeviceConfig device)
     {
         // `env` rather than a VAR=value prefix so it works whatever the remote login shell is.
         var parts = new List<string>();
@@ -58,6 +63,76 @@ internal sealed class RemoteWorkers
         parts.Add($"-H {host.RpcBindAddress} -p {device.Port}");
         return string.Join(" ", parts);
     }
+
+    /// <summary>
+    /// The PowerShell a Windows host runs to serve one device, before it is encoded for ssh. Public so
+    /// it can be tested. The CUDA toolkit's folders go on PATH first because an ssh session does not
+    /// always see them, and ggml-rpc-server.exe cannot start without the CUDA runtime DLLs.
+    /// </summary>
+    public static string BuildWindowsWorkerScript(HostConfig host, DeviceConfig device)
+    {
+        var lines = new List<string>
+        {
+            "if ($env:CUDA_PATH) { $env:PATH = \"$env:CUDA_PATH\\bin;$env:CUDA_PATH\\bin\\x64;$env:PATH\" }",
+        };
+        if (device.IsGpu)
+        {
+            lines.Add($"$env:CUDA_VISIBLE_DEVICES = '{device.CudaIndex}'");
+        }
+
+        var args = new List<string>();
+        if (device.IsRam)
+        {
+            args.Add($"-d CPU -t {device.Threads}");
+        }
+        if (!string.IsNullOrWhiteSpace(device.ExtraArgs))
+        {
+            args.Add(device.ExtraArgs.Trim());
+        }
+        args.Add($"-H {host.RpcBindAddress} -p {device.Port}");
+
+        lines.Add($"& {Shell.PowerShellQuote(host.RpcServerPath)} {string.Join(" ", args)}");
+        lines.Add("exit $LASTEXITCODE");
+        return string.Join("; ", lines);
+    }
+
+    /// <summary>The command that stops every worker on a host. Public so it can be tested.</summary>
+    public static string BuildKillCommand(HostConfig host, bool force)
+    {
+        var path = host.RpcServerPath.Replace('\\', '/');
+
+        if (host.IsWindows)
+        {
+            // Windows has no gentle signal for a console program started over ssh, so both kinds of
+            // stop end the process outright. Get-Process wants the name without ".exe".
+            var exe = Path.GetFileNameWithoutExtension(path);
+            if (string.IsNullOrEmpty(exe)) return "";
+            return Shell.PowerShellCommand(
+                $"Get-Process -Name {Shell.PowerShellQuote(exe)} -ErrorAction SilentlyContinue | " +
+                "Stop-Process -Force -ErrorAction SilentlyContinue; exit 0");
+        }
+
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(name)) return "";
+
+        // killall (psmisc) where present, pkill (procps) otherwise; pkill -x only sees the first 15
+        // characters of a process name, hence the truncation. Exit status is irrelevant: "nothing to
+        // kill" is the good outcome.
+        var q = Shell.PosixQuote(name);
+        var q15 = Shell.PosixQuote(name.Length > 15 ? name[..15] : name);
+        var signal = force ? "-9 " : "";
+        return $"killall {signal}{q} 2>/dev/null || pkill {signal}-x {q15} 2>/dev/null; true";
+    }
+
+    /// <summary>
+    /// An nvidia-smi call for <paramref name="host"/>. On Windows each argument is quoted, because
+    /// PowerShell can read an unquoted "index,memory.free" as a list rather than one word.
+    /// </summary>
+    public static string BuildNvidiaSmiCommand(HostConfig host, params string[] args)
+        => host.IsWindows
+            ? Shell.PowerShellCommand(
+                "& nvidia-smi " + string.Join(" ", args.Select(Shell.PowerShellQuote)) + "; exit $LASTEXITCODE")
+            : "nvidia-smi " + string.Join(" ", args);
 
     /// <summary>
     /// Makes sure the worker for <paramref name="device"/> is accepting connections, starting it if
@@ -203,16 +278,8 @@ internal sealed class RemoteWorkers
     // where blocking on an async method that resumes on that thread would deadlock.
     private static void KillRemoteWorkers(HostConfig host, bool force, int timeoutMs)
     {
-        var name = Path.GetFileName(host.RpcServerPath.Replace('\\', '/'));
-        if (string.IsNullOrEmpty(name)) return;
-
-        // killall (psmisc) where present, pkill (procps) otherwise; pkill -x only sees the first 15
-        // characters of a process name, hence the truncation. Exit status is irrelevant: "nothing to
-        // kill" is the good outcome.
-        var q = Shell.PosixQuote(name);
-        var q15 = Shell.PosixQuote(name.Length > 15 ? name[..15] : name);
-        var signal = force ? "-9 " : "";
-        var command = $"killall {signal}{q} 2>/dev/null || pkill {signal}-x {q15} 2>/dev/null; true";
+        var command = BuildKillCommand(host, force);
+        if (command.Length == 0) return;
 
         var psi = Shell.Ssh(host, command);
         using var process = new Process { StartInfo = psi };
@@ -236,7 +303,7 @@ internal sealed class RemoteWorkers
     /// <summary>Free VRAM in MiB per CUDA index on a host, or null if it could not be read.</summary>
     public static async Task<Dictionary<int, double>?> QueryFreeMibAsync(HostConfig host)
         => ParseIndexedMib(await Shell.RunSshCaptureAsync(
-            host, "nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits"));
+            host, BuildNvidiaSmiCommand(host, "--query-gpu=index,memory.free", "--format=csv,noheader,nounits")));
 
     private static Dictionary<int, double>? ParseIndexedMib(string? text)
     {
@@ -264,14 +331,31 @@ internal sealed class RemoteWorkers
     /// text stating where the weights went. The workers' own GPU allocation is the ground truth and
     /// does not depend on llama.cpp's log format. Returns -1 when a reading could not be taken, which is
     /// distinct from a real 0.
+    ///
+    /// Windows is the exception. Its graphics driver model (WDDM, which consumer GPUs on Windows use)
+    /// hides per-process memory, so nvidia-smi answers "[N/A]" there. For a Windows host this sums each
+    /// card's total memory in use instead. The caller compares a reading taken before the model loads
+    /// with one taken after, so whatever else the card was already holding cancels out.
     /// </summary>
     public static async Task<double> GetWorkerVramMibAsync(IEnumerable<HostConfig> hosts)
     {
         double total = 0;
         foreach (var host in hosts)
         {
+            if (host.IsWindows)
+            {
+                var used = ParseIndexedMib(await Shell.RunSshCaptureAsync(
+                    host, BuildNvidiaSmiCommand(host, "--query-gpu=index,memory.used", "--format=csv,noheader,nounits")));
+                if (used == null)
+                {
+                    return -1;
+                }
+                total += used.Values.Sum();
+                continue;
+            }
+
             var output = await Shell.RunSshCaptureAsync(
-                host, "nvidia-smi --query-compute-apps=process_name,used_memory --format=csv,noheader");
+                host, BuildNvidiaSmiCommand(host, "--query-compute-apps=process_name,used_memory", "--format=csv,noheader"));
             if (output == null)
             {
                 return -1;
@@ -303,10 +387,7 @@ internal sealed class RemoteWorkers
     {
         if (!host.HasCache) return null;
 
-        var dir = Shell.PosixQuote(host.CacheDir!);
-        var volume = Shell.PosixQuote(host.CacheVolume!);
-        var output = await Shell.RunSshCaptureAsync(host,
-            $"du -sb {dir} 2>/dev/null | cut -f1; df -B1 --output=avail {volume} | tail -1", 8000);
+        var output = await Shell.RunSshCaptureAsync(host, BuildCacheStatsCommand(host), 8000);
         if (output == null) return null;
 
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -326,8 +407,39 @@ internal sealed class RemoteWorkers
     {
         if (!host.HasCache) return;
 
-        var dir = Shell.PosixQuote(host.CacheDir!);
-        await Shell.RunSshCaptureAsync(host,
-            $"if [ -d {dir} ]; then find {dir} -type f -delete; fi", 30000);
+        await Shell.RunSshCaptureAsync(host, BuildClearCacheCommand(host), 30000);
+    }
+
+    /// <summary>Prints the cache's size in bytes, then the free bytes on its volume, one per line.</summary>
+    public static string BuildCacheStatsCommand(HostConfig host)
+    {
+        if (host.IsWindows)
+        {
+            var dir = Shell.PowerShellQuote(host.CacheDir!);
+            var volume = Shell.PowerShellQuote(host.CacheVolume!);
+            return Shell.PowerShellCommand(
+                $"$d = {dir}; $v = {volume}; $used = 0; " +
+                "if (Test-Path -LiteralPath $d) { $s = (Get-ChildItem -LiteralPath $d -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; if ($s) { $used = [long]$s } }; " +
+                "$free = (New-Object System.IO.DriveInfo ([System.IO.Path]::GetPathRoot($v))).AvailableFreeSpace; " +
+                "Write-Output $used; Write-Output $free");
+        }
+
+        var posixDir = Shell.PosixQuote(host.CacheDir!);
+        var posixVolume = Shell.PosixQuote(host.CacheVolume!);
+        return $"du -sb {posixDir} 2>/dev/null | cut -f1; df -B1 --output=avail {posixVolume} | tail -1";
+    }
+
+    /// <summary>Empties the cache directory of files and keeps the directory itself.</summary>
+    public static string BuildClearCacheCommand(HostConfig host)
+    {
+        if (host.IsWindows)
+        {
+            var dir = Shell.PowerShellQuote(host.CacheDir!);
+            return Shell.PowerShellCommand(
+                $"$d = {dir}; if (Test-Path -LiteralPath $d) {{ Get-ChildItem -LiteralPath $d -Recurse -File -Force | Remove-Item -Force }}");
+        }
+
+        var posixDir = Shell.PosixQuote(host.CacheDir!);
+        return $"if [ -d {posixDir} ]; then find {posixDir} -type f -delete; fi";
     }
 }

@@ -212,6 +212,8 @@ public sealed class PortalConfig
             if (string.IsNullOrWhiteSpace(host.Ssh)) errors.Add($"{where}: ssh (the ssh destination) is required.");
             if (string.IsNullOrWhiteSpace(host.Address)) errors.Add($"{where}: address (how this PC reaches the host) is required.");
             if (string.IsNullOrWhiteSpace(host.RpcServerPath)) errors.Add($"{where}: rpcServerPath is required.");
+            if (!host.IsWindows && !host.IsLinux)
+                errors.Add($"{where}: os must be \"linux\" or \"windows\" (got \"{host.Os}\").");
         }
 
         var deviceIds = new HashSet<string>();
@@ -326,6 +328,13 @@ public sealed class HostConfig
     /// <summary>ssh destination: an alias from ~/.ssh/config or user@hostname. Key-based login is required.</summary>
     public string Ssh { get; set; } = "";
 
+    /// <summary>
+    /// The host's operating system: "linux" (the default) or "windows". It decides which commands the
+    /// portal sends over ssh to start, stop and measure workers. A Windows host needs the OpenSSH Server
+    /// feature; the portal talks to it through Windows PowerShell, whichever shell sshd is set to use.
+    /// </summary>
+    public string Os { get; set; } = "linux";
+
     /// <summary>Extra arguments passed to every ssh invocation, e.g. ["-i", "C:\\keys\\worker", "-p", "2222"].</summary>
     public string[] SshOptions { get; set; } = Array.Empty<string>();
 
@@ -355,6 +364,12 @@ public sealed class HostConfig
 
     public string DisplayName => string.IsNullOrWhiteSpace(Label) ? Id : Label!;
     public bool HasCache => !string.IsNullOrWhiteSpace(CacheDir) && !string.IsNullOrWhiteSpace(CacheVolume);
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsWindows => string.Equals(Os?.Trim(), "windows", StringComparison.OrdinalIgnoreCase);
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsLinux => string.IsNullOrWhiteSpace(Os) || string.Equals(Os.Trim(), "linux", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class DeviceConfig
