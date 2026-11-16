@@ -42,6 +42,23 @@ internal static class Shell
     public static string PosixQuote(string word)
         => SafeShellWord.IsMatch(word) ? word : "'" + word.Replace("'", "'\\''") + "'";
 
+    /// <summary>Quotes a string as a PowerShell literal: single quotes, with any ' doubled.</summary>
+    public static string PowerShellQuote(string word) => "'" + word.Replace("'", "''") + "'";
+
+    /// <summary>
+    /// Wraps a PowerShell script as one command line for a Windows ssh host. The script travels as
+    /// -EncodedCommand (base64 of UTF-16), which contains no quotes or shell metacharacters, so it reaches
+    /// PowerShell intact whether the host's sshd hands commands to cmd.exe (the default) or to PowerShell.
+    /// Progress output is switched off because, with redirected output, PowerShell would otherwise write
+    /// it to stderr as CLIXML.
+    /// </summary>
+    public static string PowerShellCommand(string script)
+    {
+        var full = "$ProgressPreference = 'SilentlyContinue'; " + script;
+        return "powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand " +
+               Convert.ToBase64String(Encoding.Unicode.GetBytes(full));
+    }
+
     /// <summary>
     /// Runs a program and returns its stdout, or null if it could not run, timed out or exited
     /// non-zero. Never throws: every caller treats "no answer" as a normal outcome.

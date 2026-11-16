@@ -21,7 +21,7 @@ It does not reimplement inference. It drives [llama.cpp](https://github.com/ggml
 ## How it fits together
 
 ```
- this PC (Windows)                                 another computer (Linux)
+ this PC (Windows)                                 another computer (Linux or Windows)
  +-------------------------------+                +--------------------------+
  | DualLlmPortal.exe             |   ssh start    | ggml-rpc-server  GPU 0   |
  |   setup page (WebView2)       |--------------->| ggml-rpc-server  GPU 1   |
@@ -47,7 +47,8 @@ On the PC that runs the portal:
 
 For each extra computer you want to borrow devices from (optional):
 
-- Linux with an NVIDIA GPU and driver, and the same toolchain minus .NET: git, CMake, a C++ compiler, CUDA Toolkit.
+- Linux or Windows with an NVIDIA GPU and driver, and the same toolchain minus .NET: git, CMake, a C++ compiler, CUDA Toolkit
+  (on Windows, Visual Studio 2022 or its Build Tools as on the portal PC).
 - An ssh server you can log into **with a key** from the portal PC, and a trusted network between the two
   (see [Security](#security)). Details in [docs/MULTI_MACHINE.md](docs/MULTI_MACHINE.md).
 
@@ -117,6 +118,7 @@ Relative paths are relative to the home folder.
 | `id` | Short name that devices refer to. |
 | `label` | Shown in the UI. |
 | `ssh` | ssh destination: `user@host` or an alias from `~/.ssh/config`. |
+| `os` | `"linux"` (default) or `"windows"`. Decides which commands the portal sends over ssh. See [docs/MULTI_MACHINE.md](docs/MULTI_MACHINE.md#windows-workers). |
 | `sshOptions` | Extra ssh arguments, for example `["-i", "C:\\keys\\worker", "-p", "2222"]`. |
 | `address` | How this PC reaches the worker's RPC ports (IP or DNS name). |
 | `rpcServerPath` | Absolute path of `ggml-rpc-server` on the worker. |
@@ -187,7 +189,7 @@ output. Ordering matters to llama.cpp (`--rpc` must come before `--device`), and
 
 - **"Open config" shows a problems banner.** The text says which option is wrong; fix it and press Reload config.
 - **llama-server not found.** Run `scripts\build-llamacpp.ps1`, or point `llamaServer.path` and `fitParamsPath` at your own build.
-- **A remote device never comes up.** Run `ssh <host's ssh value> true` by hand first (this also trusts the host key),
+- **A remote device never comes up.** Run `ssh <host's ssh value> hostname` by hand first (this also trusts the host key),
   then check the worker's firewall for the device's port. `portal-llama-server.log` shows what failed.
 - **Model loads, but output is garbage or the load fails oddly with a remote device.** The worker and the portal PC
   are on different llama.cpp commits, or were built with a different `GGML_MAX_NAME`. Rebuild both from the same
@@ -202,7 +204,7 @@ output. Ordering matters to llama.cpp (`--rpc` must come before `--device`), and
 
 ```powershell
 dotnet build DualLlmPortal.sln -c Release
-cd DualLlmPortal.Tests; dotnet run -c Release   # 30 tests: launch-argument building, config validation, worker commands
+cd DualLlmPortal.Tests; dotnet run -c Release   # 42 tests: launch-argument building, config validation, worker commands
 ```
 
 Do not publish by hand with `dotnet publish -o <repo root>`; use `scripts\publish.ps1`, which stages and

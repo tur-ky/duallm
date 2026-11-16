@@ -36,6 +36,16 @@
       "cacheDir": "/home/me/.cache/llama.cpp/rpc",
       "cacheVolume": "/home/me"
     }
+    // A Windows worker, for example a laptop with an NVIDIA GPU (docs/MULTI_MACHINE.md, "Windows workers").
+    // "os": "windows" makes the portal send it PowerShell commands instead of Linux ones.
+    // ,{
+    //   "id": "laptop",
+    //   "label": "Laptop",
+    //   "ssh": "me@192.168.1.60",
+    //   "os": "windows",
+    //   "address": "192.168.1.60",
+    //   "rpcServerPath": "C:\\Users\\me\\duallm\\llama.cpp\\build\\bin\\Release\\ggml-rpc-server.exe"
+    // }
   ],
 
   // Every place the model may be put, in the order llama.cpp fills them. List GPUs before RAM so RAM
@@ -54,6 +64,7 @@
     { "id": "worker-gpu0", "type": "gpu", "host": "worker", "label": "Worker GPU 0", "chip": "W-GPU0", "vramGb": 8, "cudaIndex": 0, "port": 50052, "extraArgs": "-c", "default": true },
     // { "id": "worker-gpu1", "type": "gpu", "host": "worker", "label": "Worker GPU 1", "chip": "W-GPU1", "vramGb": 8, "cudaIndex": 1, "port": 50054, "extraArgs": "-c" },
     { "id": "worker-ram", "type": "ram", "host": "worker", "label": "the worker's RAM", "chip": "Worker RAM", "port": 50053, "threads": 8 }
+    // ,{ "id": "laptop-gpu", "type": "gpu", "host": "laptop", "label": "Laptop RTX 3050", "chip": "3050", "vramGb": 6, "cudaIndex": 0, "port": 50052, "extraArgs": "-c" }
   ],
 
   // Optional helper servers (MCP bridges) that can be switched on per session. "{home}" expands to the
