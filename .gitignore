@@ -44,3 +44,6 @@ obj/
 *.pfx
 id_rsa*
 id_ed25519*
+
+# simple-workflow plugin artifacts (local-only; delete entries to share via git)
+.simple-workflow
